@@ -1,1 +1,1 @@
-# AAMDL_Group_10_Mini_Project
+# Serving a DL model using Streamlit.
