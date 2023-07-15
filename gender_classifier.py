@@ -1,137 +1,129 @@
 # adapted from: https://thecleverprogrammer.com/2020/08/02/gender-classification-model/
 
-
-import numpy as np
-import pandas as pd
-import seaborn as sns
-import tensorflow as tf
-
-import os
+import sys
+import streamlit as st
 import cv2
-
-import matplotlib.pyplot as plt
-
-
-def extract_label(img_path,train = True):
-  filename, _ = os.path.splitext(os.path.basename(img_path))
-
-  subject_id, etc = filename.split('__')
-  
-  if train:
-      gender, lr, finger, _, _ = etc.split('_')
-  else:
-      gender, lr, finger, _ = etc.split('_')
-  
-  gender = 0 if gender == 'M' else 1
-  lr = 0 if lr == 'Left' else 1
-
-  if finger == 'thumb':
-      finger = 0
-  elif finger == 'index':
-      finger = 1
-  elif finger == 'middle':
-      finger = 2
-  elif finger == 'ring':
-      finger = 3
-  elif finger == 'little':
-      finger = 4
-  return np.array([gender], dtype=np.uint16)
-
+from tensorflow import keras
+import tempfile
+import numpy as np
+import tensorflow as tf
+from io import StringIO
 
 img_size = 96
 
-def loading_data(path,train):
-    print("loading data from: ",path)
-    data = []
-    for img in os.listdir(path):
-        try:
-            img_array = cv2.imread(os.path.join(path, img), cv2.IMREAD_GRAYSCALE)
-            img_resize = cv2.resize(img_array, (img_size, img_size))
-            label = extract_label(os.path.join(path, img),train)
-            data.append([label[0], img_resize ])
-        except Exception as e:
-            pass
-    data
-    return data
+# The model was built using the notebook with a kaggle dataset - https://www.kaggle.com/datasets/ruizgara/socofing
+# Load the saved model
+model = keras.models.load_model("model/model.h5")
+
+# preprocess the image
+def preprocess_image(image):
+    # Convert to grayscale as required
+    if image.shape[-1] == 3:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Resize the image to the desired size
+    image = cv2.resize(image, (img_size, img_size))
+
+    # Normalize the image
+    image = image / 255.0
+
+    # Expand dimensions to match model input shape
+    image = image.reshape((1, img_size, img_size, 1))
+
+    return image
+
+# Function to make predictions
+def make_prediction(image):
+    # Preprocess the input image
+    preprocessed_image = preprocess_image(image)
+
+    # Make a prediction using the loaded model
+    prediction = model.predict(preprocessed_image)[0]
 
 
-Real_path = "../input/aman/web/Real"
-Easy_path = "../input/aman/web/Altered-Easy"
-Medium_path = "../input/aman/web/Altered-Medium"
-Hard_path = "../input/aman/web/Altered-Hard"
+    return prediction
 
+# Function to capture model summary as string
+def get_model_summary(model):
+    # Create a StringIO object to capture the printed output
+    summary_str = StringIO()
+    sys.stdout = summary_str  # Redirect stdout to StringIO
 
-Easy_data = loading_data(Easy_path, train = True)
-Medium_data = loading_data(Medium_path, train = True)
-Hard_data = loading_data(Hard_path, train = True)
-test = loading_data(Real_path, train = False)
+    # Print the model summary
+    model.summary()
 
-data = np.concatenate([Easy_data, Medium_data, Hard_data], axis=0)
+    # Capture the printed output as a string
+    summary_text = summary_str.getvalue()
 
-del Easy_data, Medium_data, Hard_data
+    # Reset stdout
+    sys.stdout = sys.__stdout__
 
+    return summary_text
 
-import random
-random.shuffle(data)
-random.shuffle(test)
-
-img, labels = [], []
-for label, feature in data:
-    labels.append(label)
-    img.append(feature)
-train_data = np.array(img).reshape(-1, img_size, img_size, 1)
-train_data = train_data / 255.0
-
-from tensorflow.keras import Sequential 
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dense, Flatten
-from tensorflow.keras import layers
-from tensorflow.keras import optimizers
-
-model = Sequential([
-                    Conv2D(32, 3, padding='same', activation='relu',kernel_initializer='he_uniform', input_shape = [96, 96, 1]),
-                    MaxPooling2D(2),
-                    Conv2D(32, 3, padding='same', kernel_initializer='he_uniform', activation='relu'),
-                    MaxPooling2D(2),
-                    Flatten(),
-                    Dense(128, kernel_initializer='he_uniform',activation = 'relu'),
-                    Dense(2, activation = 'softmax'),
-                    ])
-
-model.compile(optimizer = optimizers.Adam(1e-3), loss = 'categorical_crossentropy', metrics = ['accuracy'])
-early_stopping_cb = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)
-
-history = model.fit(train_data, train_labels, batch_size = 128, epochs = 30, 
-          validation_split = 0.2, callbacks = [early_stopping_cb], verbose = 1)
-
-import pandas as pd
-import matplotlib.pyplot as plt
-pd.DataFrame(history.history).plot(figsize = (8,5))
-plt.grid(True)
-plt.gca().set_ylim(0,1)
-
-test_images, test_labels = [], []
-
-for label, feature in test:
-    test_images.append(feature)
-    test_labels.append(label)
-    
-test_images = np.array(test_images).reshape(-1, img_size, img_size, 1)
-test_images = test_images / 255.0
-del test
-test_labels  = to_categorical(test_labels, num_classes = 2)
-
-model.evaluate(test_images, test_labels)
-
+# Streamlit app
 def main():
-    st.title('Pretrained model demo')
-    model = load_model()
-    categories = load_labels()
-    image = load_image()
-    result = st.button('Run on image')
-    if result:
-        st.write('Calculating results...')
-        predict(model, categories, image)
+    # App title
+    st.title("Gender Classifier App")
+
+    # File uploader
+    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+
+    # Make prediction on button click
+    if st.button("Predict"):
+        if uploaded_file is not None:
+            # Read the image file
+            file_bytes = uploaded_file.read()
+            image = cv2.imdecode(np.asarray(bytearray(file_bytes)), cv2.IMREAD_COLOR)
+
+            if image is not None:
+                # Convert the image to grayscale
+                gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+                # Display the image
+                st.image(gray_image, caption="Uploaded Image", use_column_width=True)
+
+                # Make a prediction
+                prediction = make_prediction(gray_image)
+                st.success(f"Prediction: {prediction}")
+
+                # Display the predicted gender
+                # Define the categories
+                predicted_label = np.argmax(prediction)
+                categories = ["Male", "Female"]
+
+                # predicted_gender = "Male" if prediction == 0 else "Female"
+                
+                # Get the predicted category
+                predicted_category = categories[predicted_label]
+                st.success(f"The predicted gender for the uploaded fingerprint is {predicted_category}.")
+            else:
+                st.warning("Unable to read the image file")
+        else:
+            st.warning("Please upload an image of a fingerprint")
+
+        # Display model summary
+        st.subheader("Model Summary")
+        # st.text(model.summary())
+        model_summary = get_model_summary(model)
+        st.text(model_summary)
+
+        # Display model architecture
+        st.subheader("Model Architecture")
+        model_plot = tf.keras.utils.plot_model(model, to_file="model_architecture.png", show_shapes=True)
+        st.image("model_architecture.png")
 
 
-if __name__ == '__main__':
+# def main():
+#     st.title('Pretrained model demo')
+#     model = load_model()
+#     categories = load_labels()
+#     image = load_image()
+#     result = st.button('Run on image')
+#     if result:
+#         st.write('Calculating results...')
+#         predict(model, categories, image)
+
+
+# Run the app
+if __name__ == "__main__":
     main()
