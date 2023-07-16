@@ -3,7 +3,6 @@ pandas
 matplotlib
 seaborn
 tensorflow
-opencv-python
 streamlit
 pydot
 opencv-python-headless
